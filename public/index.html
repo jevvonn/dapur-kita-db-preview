@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DapurKita - Polyglot Persistence Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 960px; margin: 24px auto; padding: 0 16px; background: #faf8f5; color: #1f2937; }
+    header { background: #14532d; color: #fefce8; padding: 16px 24px; border-radius: 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    nav { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+    nav a { font-size: 13px; color: #14532d; background: #dcfce7; padding: 4px 10px; border-radius: 12px; text-decoration: none; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
+    @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+    .card { background: white; padding: 16px; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    input, select, textarea, button { width: 100%; padding: 8px; margin: 6px 0; box-sizing: border-box; border-radius: 6px; border: 1px solid #d1d5db; font: inherit; }
+    button { background: #15803d; color: white; font-weight: 600; border: none; cursor: pointer; }
+    button:hover { filter: brightness(0.92); }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .row button { flex: 1; }
+    .sm { width: auto; padding: 4px 10px; font-size: 13px; margin: 4px 4px 0 0; }
+    .badge { display: inline-block; background: #dcfce7; color: #166534; padding: 2px 8px; border-radius: 12px; font-size: 12px; }
+    .item { border-bottom: 1px solid #eee; padding: 8px 0; }
+    .muted { color: #6b7280; font-size: 13px; }
+    pre { background: #111827; color: #a7f3d0; padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 12px; max-height: 420px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h2 style="margin:0;">DapurKita</h2>
+      <small>PostgreSQL • MongoDB • Redis • Neo4j</small>
+    </div>
+    <div id="userStatus">Belum login</div>
+  </header>
+  <nav>
+    <a href="http://localhost:8080" target="_blank">MongoDB Compass</a>
+    <a href="http://localhost:5540" target="_blank">Redis Insight</a>
+    <a href="http://localhost:7474" target="_blank">Neo4j Browser</a>
+    <a href="http://localhost:5005" target="_blank">NeoDash</a>
+  </nav>
+
+  <div class="grid">
+    <div class="card">
+      <h3>1. Autentikasi (PostgreSQL + Redis)</h3>
+      <input id="dispName" placeholder="Nama Tampilan (untuk daftar)">
+      <input id="email" placeholder="Email (contoh: noval@ub.ac.id)">
+      <input id="pass" type="password" placeholder="Password">
+      <div class="row">
+        <button onclick="register()">Daftar Akun</button>
+        <button onclick="login()" style="background:#0f766e;">Login</button>
+        <button onclick="logout()" style="background:#b91c1c;">Logout</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>2. Unggah Resep (MongoDB + Neo4j)</h3>
+      <input id="rTitle" placeholder="Judul Resep (misal: Nastar Klasik)">
+      <select id="rCat">
+        <option value="Kue & Baking">Kue & Baking</option>
+        <option value="Masakan Nusantara">Masakan Nusantara</option>
+        <option value="Minuman">Minuman</option>
+      </select>
+      <input id="rPrep" type="number" min="1" placeholder="Waktu persiapan (menit)">
+      <input id="rAttr" placeholder='Atribut Dinamis JSON (misal: {"suhu_oven":"150C"})'>
+      <input id="rIngs" placeholder="Bahan pisah koma (misal: Tepung Terigu, Mentega, Nanas)">
+      <input id="rSteps" placeholder="Langkah pisah koma (misal: Kocok mentega, Panggang 25 menit)">
+      <button onclick="createRecipe()">Simpan Resep</button>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>3. Katalog Resep (MongoDB)</h3>
+      <div class="row">
+        <input id="fQ" placeholder="Cari judul" style="flex:1; min-width:120px;">
+        <input id="fIng" placeholder="Bahan" style="flex:1; min-width:120px;">
+      </div>
+      <button onclick="loadRecipes()">Cari / Muat Semua Resep</button>
+      <div id="recipeList"></div>
+    </div>
+
+    <div class="card">
+      <h3>4. Populer Harian (Redis) & Rekomendasi (Neo4j)</h3>
+      <button onclick="loadExtras()">Refresh Populer & Rekomendasi Personal</button>
+      <h4>Populer Hari Ini (Redis Sorted Set):</h4>
+      <ul id="popularList"><li class="muted">Belum dimuat</li></ul>
+      <h4>Rekomendasi Personal (Neo4j Multi-Hop):</h4>
+      <ul id="personalRecList"><li class="muted">Belum dimuat</li></ul>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <h3>Log Respons API & Latensi (Untuk Bukti Pengujian)</h3>
+    <pre id="outputLog">Siap menguji integrasi 4 database...</pre>
+  </div>
+
+  <script>
+    let token = localStorage.getItem('dk_token') || '';
+    const $ = id => document.getElementById(id);
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const log = (label, status, data) => $('outputLog').textContent = `${label} → HTTP ${status}\n` + JSON.stringify(data, null, 2);
+
+    async function api(method, url, body) {
+      const headers = {};
+      if (body) headers['Content-Type'] = 'application/json';
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+      const data = await res.json().catch(() => ({}));
+      log(`${method} ${url}`, res.status, data);
+      if (res.status === 401 && token) setSession('', null);
+      return { ok: res.ok, data };
+    }
+
+    function setSession(t, user) {
+      token = t;
+      if (t) {
+        localStorage.setItem('dk_token', t);
+        localStorage.setItem('dk_user', user.display_name);
+      } else {
+        localStorage.removeItem('dk_token');
+        localStorage.removeItem('dk_user');
+      }
+      $('userStatus').textContent = t ? `Login: ${user.display_name}` : 'Belum login';
+    }
+
+    async function register() {
+      await api('POST', '/api/auth/register', {
+        display_name: $('dispName').value,
+        email: $('email').value,
+        password: $('pass').value
+      });
+    }
+
+    async function login() {
+      const { ok, data } = await api('POST', '/api/auth/login', { email: $('email').value, password: $('pass').value });
+      if (ok) setSession(data.token, data.user);
+    }
+
+    async function logout() {
+      await api('POST', '/api/auth/logout');
+      setSession('', null);
+    }
+
+    async function createRecipe() {
+      let attrs = {};
+      try { attrs = JSON.parse($('rAttr').value || '{}'); } catch (e) { return alert('Atribut harus JSON valid'); }
+      const split = v => v.split(',').map(s => s.trim()).filter(Boolean);
+      const { ok } = await api('POST', '/api/recipes', {
+        title: $('rTitle').value,
+        category: $('rCat').value,
+        prep_time_minutes: $('rPrep').value,
+        attributes: attrs,
+        ingredients: split($('rIngs').value).map(name => ({ name, amount: 'secukupnya' })),
+        steps: split($('rSteps').value).map((instruction, i) => ({ step_number: i + 1, instruction }))
+      });
+      if (ok) loadRecipes(false);
+    }
+
+    async function loadRecipes(withLog = true) {
+      const params = new URLSearchParams();
+      if ($('fQ').value) params.set('q', $('fQ').value);
+      if ($('fIng').value) params.set('ingredient', $('fIng').value);
+      const res = await fetch('/api/recipes?' + params);
+      const list = await res.json();
+      if (withLog) log('GET /api/recipes', res.status, { total: list.length });
+      $('recipeList').innerHTML = list.length ? list.map(r => `
+        <div class="item">
+          <strong>${esc(r.title)}</strong> <span class="badge">${esc(r.category)}</span>
+          <div class="muted">oleh ${esc(r.author_name)} • ${esc(r.prep_time_minutes)} menit • ❤ ${r.stats?.likes_count ?? 0}</div>
+          <div class="muted">Bahan: ${esc(r.ingredients.map(i => i.name).join(', ') || '-')}</div>
+          <div class="muted">Atribut: ${esc(JSON.stringify(r.attributes))}</div>
+          <button class="sm" onclick="viewDetail('${r._id}')">Detail (Cek Redis Cache)</button>
+          <button class="sm" style="background:#d97706;" onclick="likeRecipe('${r._id}')">Suka (Neo4j)</button>
+          <button class="sm" style="background:#2563eb;" onclick="getSimilar('${r._id}')">Resep Mirip</button>
+        </div>
+      `).join('') : '<p class="muted">Belum ada resep.</p>';
+    }
+
+    const viewDetail = id => api('GET', `/api/recipes/${id}`);
+    const getSimilar = id => api('GET', `/api/recipes/${id}/similar`);
+    async function likeRecipe(id) {
+      const { ok } = await api('POST', `/api/recipes/${id}/like`, { rating: 5 });
+      if (ok) loadRecipes(false);
+    }
+
+    async function loadExtras() {
+      const pops = await (await fetch('/api/popular/daily')).json();
+      $('popularList').innerHTML = pops.length
+        ? pops.map(p => `<li>${esc(p.title)} (Skor: ${p.popularity_score})</li>`).join('')
+        : '<li class="muted">Belum ada aktivitas hari ini</li>';
+
+      if (!token) {
+        $('personalRecList').innerHTML = '<li class="muted">Login untuk melihat rekomendasi personal</li>';
+        return log('GET /api/popular/daily', 200, pops);
+      }
+      const { data } = await api('GET', '/api/recommendations/personal');
+      const recs = data.recommendations || [];
+      $('personalRecList').innerHTML = recs.length
+        ? recs.map(r => `<li>${esc(r.title)} (Match: ${r.score})</li>`).join('')
+        : '<li class="muted">Belum ada — sukai resep yang juga disukai pengguna lain</li>';
+    }
+
+    if (token) $('userStatus').textContent = `Login: ${localStorage.getItem('dk_user') || ''}`;
+    loadRecipes(false);
+  </script>
+</body>
+</html>
