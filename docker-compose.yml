@@ -15,7 +15,7 @@ services:
       - dapurkita-net
 
   mongodb:
-    image: mongodb/mongodb-community-server:latest-slim
+    image: mongo:4.4
     container_name: dapurkita-mongodb
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin

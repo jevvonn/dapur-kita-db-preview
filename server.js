@@ -9,6 +9,7 @@ const neo4j = require("neo4j-driver");
 
 const env = process.env;
 const PORT = env.PORT || 3000;
+const HOST = env.HOST || "0.0.0.0";
 const SESSION_TTL = 3600;
 const CACHE_TTL = 300;
 
@@ -440,8 +441,8 @@ app.use((err, req, res, next) => {
 
 initDatabases()
   .then(() =>
-    app.listen(PORT, () =>
-      console.log(`Server DapurKita berjalan di http://localhost:${PORT}`),
+    app.listen(PORT, HOST, () =>
+      console.log(`Server DapurKita berjalan di http://${HOST}:${PORT}`),
     ),
   )
   .catch((err) => {

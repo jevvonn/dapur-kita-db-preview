@@ -33,10 +33,10 @@
     <div id="userStatus">Belum login</div>
   </header>
   <nav>
-    <a href="http://localhost:8080" target="_blank">MongoDB Compass</a>
-    <a href="http://localhost:5540" target="_blank">Redis Insight</a>
-    <a href="http://localhost:7474" target="_blank">Neo4j Browser</a>
-    <a href="http://localhost:5005" target="_blank">NeoDash</a>
+    <a data-port="8080" target="_blank">MongoDB Compass</a>
+    <a data-port="5540" target="_blank">Redis Insight</a>
+    <a data-port="7474" target="_blank">Neo4j Browser</a>
+    <a data-port="5005" target="_blank">NeoDash</a>
   </nav>
 
   <div class="grid">
@@ -200,6 +200,7 @@
         : '<li class="muted">Belum ada — sukai resep yang juga disukai pengguna lain</li>';
     }
 
+    document.querySelectorAll('nav a[data-port]').forEach(a => a.href = `http://${location.hostname}:${a.dataset.port}`);
     if (token) $('userStatus').textContent = `Login: ${localStorage.getItem('dk_user') || ''}`;
     loadRecipes(false);
   </script>
