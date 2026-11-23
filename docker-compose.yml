@@ -15,8 +15,11 @@ services:
       - dapurkita-net
 
   mongodb:
-    image: mongo:8.3
+    image: mongodb/mongodb-community-server:latest-slim
     container_name: dapurkita-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
     ports:
       - "27017:27017"
     volumes:
