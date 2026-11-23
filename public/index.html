@@ -21,6 +21,13 @@
     .badge { display: inline-block; background: #dcfce7; color: #166534; padding: 2px 8px; border-radius: 12px; font-size: 12px; }
     .item { border-bottom: 1px solid #eee; padding: 8px 0; }
     .muted { color: #6b7280; font-size: 13px; }
+    #toasts { position: fixed; top: 16px; right: 16px; left: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 100; pointer-events: none; }
+    .toast { pointer-events: auto; max-width: 360px; width: fit-content; padding: 10px 14px; border-radius: 8px; color: white; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: flex; gap: 8px; align-items: flex-start; animation: slideIn .2s ease-out; cursor: pointer; }
+    .toast.success { background: #15803d; }
+    .toast.error { background: #b91c1c; }
+    .toast.info { background: #1d4ed8; }
+    .toast.hide { opacity: 0; transform: translateY(-8px); transition: all .25s; }
+    @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } }
     pre { background: #111827; color: #a7f3d0; padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 12px; max-height: 420px; }
   </style>
 </head>
@@ -36,8 +43,8 @@
     <a data-port="8080" target="_blank">MongoDB Compass</a>
     <a data-port="5540" target="_blank">Redis Insight</a>
     <a data-port="7474" target="_blank">Neo4j Browser</a>
-    <a data-port="5005" target="_blank">NeoDash</a>
   </nav>
+  <div id="toasts"></div>
 
   <div class="grid">
     <div class="card">
@@ -100,16 +107,41 @@
     const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const log = (label, status, data) => $('outputLog').textContent = `${label} → HTTP ${status}\n` + JSON.stringify(data, null, 2);
 
-    async function api(method, url, body) {
+    const ICONS = { success: '✓', error: '✕', info: 'ℹ' };
+    function toast(msg, type = 'success') {
+      const el = document.createElement('div');
+      el.className = `toast ${type}`;
+      el.innerHTML = `<strong>${ICONS[type]}</strong><span>${esc(msg)}</span>`;
+      const dismiss = () => { el.classList.add('hide'); setTimeout(() => el.remove(), 250); };
+      el.onclick = dismiss;
+      $('toasts').appendChild(el);
+      setTimeout(dismiss, type === 'error' ? 5000 : 3000);
+    }
+
+    async function api(method, url, body, successMsg) {
       const headers = {};
       if (body) headers['Content-Type'] = 'application/json';
       if (token) headers['Authorization'] = `Bearer ${token}`;
-      const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+      let res;
+      try {
+        res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+      } catch (e) {
+        toast('Server tidak dapat dihubungi', 'error');
+        return { ok: false, data: {} };
+      }
       const data = await res.json().catch(() => ({}));
       log(`${method} ${url}`, res.status, data);
+      if (!res.ok) toast(data.error || `Gagal (HTTP ${res.status})`, 'error');
+      else if (successMsg !== false) toast(typeof successMsg === 'function' ? successMsg(data) : successMsg || data.message || 'Berhasil');
       if (res.status === 401 && token) setSession('', null);
       return { ok: res.ok, data };
     }
+
+    const requireLogin = action => {
+      if (token) return true;
+      toast(`Login dulu untuk ${action}`, 'error');
+      return false;
+    };
 
     function setSession(t, user) {
       token = t;
@@ -128,22 +160,25 @@
         display_name: $('dispName').value,
         email: $('email').value,
         password: $('pass').value
-      });
+      }, 'Registrasi berhasil, silakan login');
     }
 
     async function login() {
-      const { ok, data } = await api('POST', '/api/auth/login', { email: $('email').value, password: $('pass').value });
+      const { ok, data } = await api('POST', '/api/auth/login', { email: $('email').value, password: $('pass').value },
+        d => `Selamat datang, ${d.user.display_name}!`);
       if (ok) setSession(data.token, data.user);
     }
 
     async function logout() {
-      await api('POST', '/api/auth/logout');
+      if (!token) return toast('Kamu belum login', 'info');
+      await api('POST', '/api/auth/logout', null, 'Berhasil logout');
       setSession('', null);
     }
 
     async function createRecipe() {
+      if (!requireLogin('mengunggah resep')) return;
       let attrs = {};
-      try { attrs = JSON.parse($('rAttr').value || '{}'); } catch (e) { return alert('Atribut harus JSON valid'); }
+      try { attrs = JSON.parse($('rAttr').value || '{}'); } catch (e) { return toast('Atribut harus berupa JSON yang valid', 'error'); }
       const split = v => v.split(',').map(s => s.trim()).filter(Boolean);
       const { ok } = await api('POST', '/api/recipes', {
         title: $('rTitle').value,
@@ -152,7 +187,7 @@
         attributes: attrs,
         ingredients: split($('rIngs').value).map(name => ({ name, amount: 'secukupnya' })),
         steps: split($('rSteps').value).map((instruction, i) => ({ step_number: i + 1, instruction }))
-      });
+      }, d => `Resep "${d.title}" berhasil disimpan`);
       if (ok) loadRecipes(false);
     }
 
@@ -160,9 +195,18 @@
       const params = new URLSearchParams();
       if ($('fQ').value) params.set('q', $('fQ').value);
       if ($('fIng').value) params.set('ingredient', $('fIng').value);
-      const res = await fetch('/api/recipes?' + params);
-      const list = await res.json();
-      if (withLog) log('GET /api/recipes', res.status, { total: list.length });
+      let list;
+      try {
+        const res = await fetch('/api/recipes?' + params);
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+        list = await res.json();
+        if (withLog) {
+          log('GET /api/recipes', res.status, { total: list.length });
+          toast(`${list.length} resep dimuat`, list.length ? 'success' : 'info');
+        }
+      } catch (e) {
+        return toast(`Gagal memuat resep: ${e.message}`, 'error');
+      }
       $('recipeList').innerHTML = list.length ? list.map(r => `
         <div class="item">
           <strong>${esc(r.title)}</strong> <span class="badge">${esc(r.category)}</span>
@@ -176,28 +220,34 @@
       `).join('') : '<p class="muted">Belum ada resep.</p>';
     }
 
-    const viewDetail = id => api('GET', `/api/recipes/${id}`);
-    const getSimilar = id => api('GET', `/api/recipes/${id}/similar`);
+    const viewDetail = id => api('GET', `/api/recipes/${id}`, null,
+      d => `"${d.data.title}" dimuat dari ${d.source === 'REDIS_CACHE_HIT' ? 'Redis (cache hit)' : 'MongoDB (cache miss)'} • ${d.latency_ms} ms`);
+    const getSimilar = id => api('GET', `/api/recipes/${id}/similar`, null,
+      d => d.recommendations.length ? `${d.recommendations.length} resep mirip ditemukan • ${d.latency_ms} ms` : 'Belum ada resep yang mirip');
     async function likeRecipe(id) {
+      if (!requireLogin('menyukai resep')) return;
       const { ok } = await api('POST', `/api/recipes/${id}/like`, { rating: 5 });
       if (ok) loadRecipes(false);
     }
 
     async function loadExtras() {
-      const pops = await (await fetch('/api/popular/daily')).json();
+      const { ok, data: pops } = await api('GET', '/api/popular/daily', null, false);
+      if (!ok) return;
       $('popularList').innerHTML = pops.length
         ? pops.map(p => `<li>${esc(p.title)} (Skor: ${p.popularity_score})</li>`).join('')
         : '<li class="muted">Belum ada aktivitas hari ini</li>';
 
       if (!token) {
         $('personalRecList').innerHTML = '<li class="muted">Login untuk melihat rekomendasi personal</li>';
-        return log('GET /api/popular/daily', 200, pops);
+        return toast('Populer diperbarui (login untuk rekomendasi personal)', 'info');
       }
-      const { data } = await api('GET', '/api/recommendations/personal');
+      const { ok: recOk, data } = await api('GET', '/api/recommendations/personal', null, false);
+      if (!recOk) return;
       const recs = data.recommendations || [];
       $('personalRecList').innerHTML = recs.length
         ? recs.map(r => `<li>${esc(r.title)} (Match: ${r.score})</li>`).join('')
         : '<li class="muted">Belum ada — sukai resep yang juga disukai pengguna lain</li>';
+      toast(`Populer & rekomendasi diperbarui (${recs.length} rekomendasi)`);
     }
 
     document.querySelectorAll('nav a[data-port]').forEach(a => a.href = `http://${location.hostname}:${a.dataset.port}`);

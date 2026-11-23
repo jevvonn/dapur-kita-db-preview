@@ -76,19 +76,6 @@ services:
     networks:
       - dapurkita-net
 
-  neodash:
-    image: neo4jlabs/neodash:latest
-    container_name: dapurkita-neodash
-    environment:
-      ssoEnabled: "false"
-      standalone: "false"
-    ports:
-      - "5005:5005"
-    depends_on:
-      - neo4j
-    networks:
-      - dapurkita-net
-
 volumes:
   pg_data:
   mongo_data:
