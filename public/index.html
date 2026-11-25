@@ -21,6 +21,11 @@
     .badge { display: inline-block; background: #dcfce7; color: #166534; padding: 2px 8px; border-radius: 12px; font-size: 12px; }
     .item { border-bottom: 1px solid #eee; padding: 8px 0; }
     .muted { color: #6b7280; font-size: 13px; }
+    .field-label { font-size: 13px; font-weight: 600; margin-top: 8px; }
+    .attr-row { display: flex; gap: 6px; align-items: center; }
+    .attr-row input { margin: 3px 0; min-width: 0; }
+    .attr-row .del { width: 36px; flex: none; margin: 3px 0; background: #fee2e2; color: #b91c1c; }
+    .add-btn { background: transparent; color: #15803d; border: 1px dashed #86efac; }
     #toasts { position: fixed; top: 16px; right: 16px; left: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 100; pointer-events: none; }
     .toast { pointer-events: auto; max-width: 360px; width: fit-content; padding: 10px 14px; border-radius: 8px; color: white; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: flex; gap: 8px; align-items: flex-start; animation: slideIn .2s ease-out; cursor: pointer; }
     .toast.success { background: #15803d; }
@@ -68,7 +73,10 @@
         <option value="Minuman">Minuman</option>
       </select>
       <input id="rPrep" type="number" min="1" placeholder="Waktu persiapan (menit)">
-      <input id="rAttr" placeholder='Atribut Dinamis JSON (misal: {"suhu_oven":"150C"})'>
+      <div class="field-label">Atribut Dinamis <span class="muted">(opsional, beda tiap kategori)</span></div>
+      <div id="attrList"></div>
+      <datalist id="attrKeys"></datalist>
+      <button type="button" class="add-btn" onclick="addAttr('', '', true)">+ Tambah Atribut</button>
       <input id="rIngs" placeholder="Bahan pisah koma (misal: Tepung Terigu, Mentega, Nanas)">
       <input id="rSteps" placeholder="Langkah pisah koma (misal: Kocok mentega, Panggang 25 menit)">
       <button onclick="createRecipe()">Simpan Resep</button>
@@ -175,10 +183,54 @@
       setSession('', null);
     }
 
+    const ATTR_PRESETS = {
+      'Kue & Baking': ['suhu_oven', 'durasi_panggang', 'jenis_loyang'],
+      'Masakan Nusantara': ['asal_daerah', 'tingkat_pedas', 'porsi'],
+      'Minuman': ['penyajian', 'ukuran_gelas', 'tingkat_manis']
+    };
+
+    function addAttr(key = '', value = '', focus = false) {
+      const row = document.createElement('div');
+      row.className = 'attr-row';
+      row.innerHTML = `
+        <input class="attr-key" list="attrKeys" placeholder="Nama (misal: suhu_oven)">
+        <input class="attr-val" placeholder="Nilai (misal: 150C)">
+        <button type="button" class="del" title="Hapus atribut">✕</button>`;
+      row.querySelector('.attr-key').value = key;
+      row.querySelector('.attr-val').value = value;
+      row.querySelector('.del').onclick = () => row.remove();
+      $('attrList').appendChild(row);
+      if (focus) row.querySelector('.attr-key').focus();
+    }
+
+    function applyAttrPresets() {
+      const presets = ATTR_PRESETS[$('rCat').value] || [];
+      $('attrKeys').innerHTML = presets.map(k => `<option value="${esc(k)}">`).join('');
+      const hasValues = [...document.querySelectorAll('.attr-val')].some(i => i.value.trim());
+      if (hasValues) return;
+      $('attrList').innerHTML = '';
+      presets.forEach(k => addAttr(k));
+    }
+
+    function collectAttrs() {
+      const attrs = {};
+      for (const row of document.querySelectorAll('.attr-row')) {
+        const key = row.querySelector('.attr-key').value.trim();
+        const val = row.querySelector('.attr-val').value.trim();
+        if (!val) continue;
+        if (!key) throw new Error(`Nama atribut untuk nilai "${val}" belum diisi`);
+        if (key in attrs) throw new Error(`Atribut "${key}" diisi lebih dari sekali`);
+        attrs[key] = isNaN(val) ? val : Number(val);
+      }
+      return attrs;
+    }
+
+    const formatAttrs = a => Object.entries(a || {}).map(([k, v]) => `${k}: ${v}`).join(' • ') || '-';
+
     async function createRecipe() {
       if (!requireLogin('mengunggah resep')) return;
-      let attrs = {};
-      try { attrs = JSON.parse($('rAttr').value || '{}'); } catch (e) { return toast('Atribut harus berupa JSON yang valid', 'error'); }
+      let attrs;
+      try { attrs = collectAttrs(); } catch (e) { return toast(e.message, 'error'); }
       const split = v => v.split(',').map(s => s.trim()).filter(Boolean);
       const { ok } = await api('POST', '/api/recipes', {
         title: $('rTitle').value,
@@ -212,7 +264,7 @@
           <strong>${esc(r.title)}</strong> <span class="badge">${esc(r.category)}</span>
           <div class="muted">oleh ${esc(r.author_name)} • ${esc(r.prep_time_minutes)} menit • ❤ ${r.stats?.likes_count ?? 0}</div>
           <div class="muted">Bahan: ${esc(r.ingredients.map(i => i.name).join(', ') || '-')}</div>
-          <div class="muted">Atribut: ${esc(JSON.stringify(r.attributes))}</div>
+          <div class="muted">Atribut: ${esc(formatAttrs(r.attributes))}</div>
           <button class="sm" onclick="viewDetail('${r._id}')">Detail (Cek Redis Cache)</button>
           <button class="sm" style="background:#d97706;" onclick="likeRecipe('${r._id}')">Suka (Neo4j)</button>
           <button class="sm" style="background:#2563eb;" onclick="getSimilar('${r._id}')">Resep Mirip</button>
@@ -251,6 +303,8 @@
     }
 
     document.querySelectorAll('nav a[data-port]').forEach(a => a.href = `http://${location.hostname}:${a.dataset.port}`);
+    $('rCat').addEventListener('change', applyAttrPresets);
+    applyAttrPresets();
     if (token) $('userStatus').textContent = `Login: ${localStorage.getItem('dk_user') || ''}`;
     loadRecipes(false);
   </script>
