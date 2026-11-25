@@ -1,3 +1,20 @@
+x-mongo-node: &mongo-node
+  image: mongo:4.4
+  environment:
+    MONGO_REPLICA_KEY: ${MONGO_REPLICA_KEY:-dapurkitaReplicaSetKey2026}
+  command: >
+    bash -c 'echo "$$MONGO_REPLICA_KEY" > /etc/mongo-keyfile
+    && chmod 400 /etc/mongo-keyfile && chown mongodb:mongodb /etc/mongo-keyfile
+    && exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /etc/mongo-keyfile --bind_ip_all'
+  healthcheck:
+    test: ["CMD", "mongo", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+    interval: 5s
+    timeout: 5s
+    retries: 30
+    start_period: 10s
+  networks:
+    - dapurkita-net
+
 services:
   postgres:
     image: postgres:15-alpine
@@ -15,15 +32,57 @@ services:
       - dapurkita-net
 
   mongodb:
-    image: mongo:4.4
+    <<: *mongo-node
     container_name: dapurkita-mongodb
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_REPLICA_KEY: ${MONGO_REPLICA_KEY:-dapurkitaReplicaSetKey2026}
     ports:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+
+  mongodb-secondary-1:
+    <<: *mongo-node
+    container_name: dapurkita-mongodb-secondary-1
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo_secondary_1_data:/data/db
+
+  mongodb-secondary-2:
+    <<: *mongo-node
+    container_name: dapurkita-mongodb-secondary-2
+    ports:
+      - "27019:27017"
+    volumes:
+      - mongo_secondary_2_data:/data/db
+
+  mongodb-secondary-3:
+    <<: *mongo-node
+    container_name: dapurkita-mongodb-secondary-3
+    ports:
+      - "27020:27017"
+    volumes:
+      - mongo_secondary_3_data:/data/db
+
+  mongodb-init:
+    image: mongo:4.4
+    container_name: dapurkita-mongodb-init
+    restart: on-failure
+    command: mongo --host mongodb --username admin --password password --authenticationDatabase admin --quiet /init-replica.js
+    volumes:
+      - ./mongo/init-replica.js:/init-replica.js:ro
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      mongodb-secondary-1:
+        condition: service_healthy
+      mongodb-secondary-2:
+        condition: service_healthy
+      mongodb-secondary-3:
+        condition: service_healthy
     networks:
       - dapurkita-net
 
@@ -52,7 +111,7 @@ services:
     image: haohanyang/compass-web:latest
     container_name: dapurkita-compass
     environment:
-      CW_MONGO_URI: mongodb://admin:password@mongodb:27017
+      CW_MONGO_URI: mongodb://admin:password@mongodb:27017,mongodb-secondary-1:27017,mongodb-secondary-2:27017,mongodb-secondary-3:27017/?replicaSet=rs0&authSource=admin
       CW_BASIC_AUTH_USERNAME: ${DASHBOARD_USER:-admin}
       CW_BASIC_AUTH_PASSWORD: ${DASHBOARD_PASSWORD:-dapurkita_dashboard}
     ports:
@@ -125,6 +184,9 @@ services:
 volumes:
   pg_data:
   mongo_data:
+  mongo_secondary_1_data:
+  mongo_secondary_2_data:
+  mongo_secondary_3_data:
   neo4j_data:
   redisinsight_data:
 

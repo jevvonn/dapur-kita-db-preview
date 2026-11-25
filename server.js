@@ -27,7 +27,8 @@ const pgPool = new Pool({
 });
 
 const mongoClient = new MongoClient(
-  env.MONGO_URI || "mongodb://admin:password@localhost:27017",
+  env.MONGO_URI ||
+    "mongodb://admin:password@localhost:27017/?directConnection=true",
 );
 let recipesCol;
 
@@ -431,6 +432,28 @@ app.get(
       score: r.get("match_score").toNumber(),
     }));
     res.json({ latency_ms: Date.now() - start, recommendations: items });
+  }),
+);
+
+app.get(
+  "/api/mongo/replication",
+  wrap(async (req, res) => {
+    const status = await mongoClient
+      .db("admin")
+      .command({ replSetGetStatus: 1 });
+    const primary = status.members.find((m) => m.stateStr === "PRIMARY");
+    res.json({
+      replica_set: status.set,
+      members: status.members.map((m) => ({
+        host: m.name,
+        role: m.stateStr,
+        healthy: m.health === 1,
+        last_applied: m.optimeDate,
+        lag_seconds: primary
+          ? Math.round((primary.optimeDate - m.optimeDate) / 1000)
+          : null,
+      })),
+    });
   }),
 );
 
