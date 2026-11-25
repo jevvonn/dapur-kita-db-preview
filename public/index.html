@@ -22,10 +22,13 @@
     .item { border-bottom: 1px solid #eee; padding: 8px 0; }
     .muted { color: #6b7280; font-size: 13px; }
     .field-label { font-size: 13px; font-weight: 600; margin-top: 8px; }
-    .attr-row { display: flex; gap: 6px; align-items: center; }
-    .attr-row input { margin: 3px 0; min-width: 0; }
-    .attr-row .del { width: 36px; flex: none; margin: 3px 0; background: #fee2e2; color: #b91c1c; }
+    .dyn-row { display: flex; gap: 6px; align-items: center; }
+    .dyn-row input { margin: 3px 0; min-width: 0; flex: 1; }
+    .dyn-row .ing-amount { flex: 0 0 38%; }
+    .dyn-row .del { width: 36px; flex: none; margin: 3px 0; background: #fee2e2; color: #b91c1c; }
+    .step-no { flex: none; width: 22px; text-align: right; font-weight: 600; color: #6b7280; font-size: 14px; }
     .add-btn { background: transparent; color: #15803d; border: 1px dashed #86efac; }
+    .submit-btn { margin-top: 14px; }
     #toasts { position: fixed; top: 16px; right: 16px; left: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 100; pointer-events: none; }
     .toast { pointer-events: auto; max-width: 360px; width: fit-content; padding: 10px 14px; border-radius: 8px; color: white; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: flex; gap: 8px; align-items: flex-start; animation: slideIn .2s ease-out; cursor: pointer; }
     .toast.success { background: #15803d; }
@@ -77,9 +80,13 @@
       <div id="attrList"></div>
       <datalist id="attrKeys"></datalist>
       <button type="button" class="add-btn" onclick="addAttr('', '', true)">+ Tambah Atribut</button>
-      <input id="rIngs" placeholder="Bahan pisah koma (misal: Tepung Terigu, Mentega, Nanas)">
-      <input id="rSteps" placeholder="Langkah pisah koma (misal: Kocok mentega, Panggang 25 menit)">
-      <button onclick="createRecipe()">Simpan Resep</button>
+      <div class="field-label">Bahan <span class="muted">(takaran kosong = secukupnya)</span></div>
+      <div id="ingList"></div>
+      <button type="button" class="add-btn" onclick="addIngredient('', '', true)">+ Tambah Bahan</button>
+      <div class="field-label">Langkah Memasak</div>
+      <div id="stepList"></div>
+      <button type="button" class="add-btn" onclick="addStep('', true)">+ Tambah Langkah</button>
+      <button class="submit-btn" onclick="createRecipe()">Simpan Resep</button>
     </div>
   </div>
 
@@ -189,19 +196,68 @@
       'Minuman': ['penyajian', 'ukuran_gelas', 'tingkat_manis']
     };
 
-    function addAttr(key = '', value = '', focus = false) {
+    function addRow(listId, html, values, focus, onRemove) {
       const row = document.createElement('div');
-      row.className = 'attr-row';
-      row.innerHTML = `
-        <input class="attr-key" list="attrKeys" placeholder="Nama (misal: suhu_oven)">
-        <input class="attr-val" placeholder="Nilai (misal: 150C)">
-        <button type="button" class="del" title="Hapus atribut">✕</button>`;
-      row.querySelector('.attr-key').value = key;
-      row.querySelector('.attr-val').value = value;
-      row.querySelector('.del').onclick = () => row.remove();
-      $('attrList').appendChild(row);
-      if (focus) row.querySelector('.attr-key').focus();
+      row.className = 'dyn-row';
+      row.innerHTML = html + '<button type="button" class="del" title="Hapus">✕</button>';
+      row.querySelectorAll('input').forEach((input, i) => input.value = values[i] || '');
+      row.querySelector('.del').onclick = () => { row.remove(); onRemove?.(); };
+      $(listId).appendChild(row);
+      if (focus) row.querySelector('input').focus();
+      return row;
     }
+
+    const addAttr = (key = '', value = '', focus = false) => addRow('attrList', `
+      <input class="attr-key" list="attrKeys" placeholder="Nama (misal: suhu_oven)">
+      <input class="attr-val" placeholder="Nilai (misal: 150C)">`, [key, value], focus);
+
+    const addIngredient = (name = '', amount = '', focus = false) => addRow('ingList', `
+      <input class="ing-name" placeholder="Nama bahan (misal: Tepung terigu)">
+      <input class="ing-amount" placeholder="Takaran (2 butir)">`, [name, amount], focus);
+
+    function renumberSteps() {
+      document.querySelectorAll('#stepList .step-no').forEach((el, i) => el.textContent = `${i + 1}.`);
+    }
+
+    function addStep(text = '', focus = false) {
+      addRow('stepList', `
+        <span class="step-no"></span>
+        <input class="step-text" placeholder="Tulis langkah (misal: Kocok mentega hingga pucat)">`, [text], focus, renumberSteps);
+      renumberSteps();
+    }
+
+    function focusNextRow(e, listId, addFn) {
+      if (e.key !== 'Enter' || e.target.tagName !== 'INPUT') return;
+      e.preventDefault();
+      const row = e.target.closest('.dyn-row');
+      const inputs = [...row.querySelectorAll('input')];
+      const idx = inputs.indexOf(e.target);
+      if (idx < inputs.length - 1) return inputs[idx + 1].focus();
+      const next = row.nextElementSibling;
+      next ? next.querySelector('input').focus() : addFn();
+    }
+    $('ingList').addEventListener('keydown', e => focusNextRow(e, 'ingList', () => addIngredient('', '', true)));
+    $('stepList').addEventListener('keydown', e => focusNextRow(e, 'stepList', () => addStep('', true)));
+
+    function collectIngredients() {
+      const list = [];
+      const seen = new Set();
+      for (const row of document.querySelectorAll('#ingList .dyn-row')) {
+        const name = row.querySelector('.ing-name').value.trim();
+        const amount = row.querySelector('.ing-amount').value.trim();
+        if (!name && !amount) continue;
+        if (!name) throw new Error(`Nama bahan untuk takaran "${amount}" belum diisi`);
+        if (seen.has(name.toLowerCase())) throw new Error(`Bahan "${name}" diisi lebih dari sekali`);
+        seen.add(name.toLowerCase());
+        list.push({ name, amount: amount || 'secukupnya' });
+      }
+      return list;
+    }
+
+    const collectSteps = () => [...document.querySelectorAll('#stepList .step-text')]
+      .map(i => i.value.trim())
+      .filter(Boolean)
+      .map((instruction, i) => ({ step_number: i + 1, instruction }));
 
     function applyAttrPresets() {
       const presets = ATTR_PRESETS[$('rCat').value] || [];
@@ -214,7 +270,7 @@
 
     function collectAttrs() {
       const attrs = {};
-      for (const row of document.querySelectorAll('.attr-row')) {
+      for (const row of document.querySelectorAll('#attrList .dyn-row')) {
         const key = row.querySelector('.attr-key').value.trim();
         const val = row.querySelector('.attr-val').value.trim();
         if (!val) continue;
@@ -229,16 +285,20 @@
 
     async function createRecipe() {
       if (!requireLogin('mengunggah resep')) return;
-      let attrs;
-      try { attrs = collectAttrs(); } catch (e) { return toast(e.message, 'error'); }
-      const split = v => v.split(',').map(s => s.trim()).filter(Boolean);
+      let attributes, ingredients;
+      try {
+        attributes = collectAttrs();
+        ingredients = collectIngredients();
+      } catch (e) {
+        return toast(e.message, 'error');
+      }
       const { ok } = await api('POST', '/api/recipes', {
         title: $('rTitle').value,
         category: $('rCat').value,
         prep_time_minutes: $('rPrep').value,
-        attributes: attrs,
-        ingredients: split($('rIngs').value).map(name => ({ name, amount: 'secukupnya' })),
-        steps: split($('rSteps').value).map((instruction, i) => ({ step_number: i + 1, instruction }))
+        attributes,
+        ingredients,
+        steps: collectSteps()
       }, d => `Resep "${d.title}" berhasil disimpan`);
       if (ok) loadRecipes(false);
     }
@@ -263,7 +323,8 @@
         <div class="item">
           <strong>${esc(r.title)}</strong> <span class="badge">${esc(r.category)}</span>
           <div class="muted">oleh ${esc(r.author_name)} • ${esc(r.prep_time_minutes)} menit • ❤ ${r.stats?.likes_count ?? 0}</div>
-          <div class="muted">Bahan: ${esc(r.ingredients.map(i => i.name).join(', ') || '-')}</div>
+          <div class="muted">Bahan: ${esc(r.ingredients.map(i => `${i.name} (${i.amount || 'secukupnya'})`).join(', ') || '-')}</div>
+          <div class="muted">Langkah: ${r.steps?.length || 0}</div>
           <div class="muted">Atribut: ${esc(formatAttrs(r.attributes))}</div>
           <button class="sm" onclick="viewDetail('${r._id}')">Detail (Cek Redis Cache)</button>
           <button class="sm" style="background:#d97706;" onclick="likeRecipe('${r._id}')">Suka (Neo4j)</button>
@@ -305,6 +366,8 @@
     document.querySelectorAll('nav a[data-port]').forEach(a => a.href = `http://${location.hostname}:${a.dataset.port}`);
     $('rCat').addEventListener('change', applyAttrPresets);
     applyAttrPresets();
+    addIngredient(); addIngredient();
+    addStep(); addStep();
     if (token) $('userStatus').textContent = `Login: ${localStorage.getItem('dk_user') || ''}`;
     loadRecipes(false);
   </script>
